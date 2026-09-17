@@ -21,9 +21,8 @@ Decide rule (per task, pure function `classify`):
 Usage:
   load.py fetch              download the three sources into ~/data/job-audit/
   load.py load               parse + upsert work.occupation / work.task (idempotent)
-  load.py seed-roles         insert the GBS function roles (idempotent on function+soc)
   load.py load-titles        parse every known title per occupation into work.title (the job-list matcher)
-  load.py all                fetch + load + seed-roles + load-titles
+  load.py all                fetch + load + load-titles
 
 Env: PG_DSN (livingos writer). Stdlib + psycopg only.
 """
@@ -67,28 +66,6 @@ AEI_METRICS = {
 }
 AUTOMATE_AT = 55.0
 HUMAN_BELOW = 0.05
-
-# The functions and the O*NET occupations they are made of. Owner-editable in work.role.
-# Lead names are NOT kept in code: set work.role.lead in the database (private), never here (public repo).
-ROLE_SEED = [
-    ("HR / Workforce", None, "Human Resources Specialists", "13-1071"),
-    ("HR / Workforce", None, "Human Resources Managers", "11-3121"),
-    ("HR / Workforce", None, "Compensation, Benefits, and Job Analysis Specialists", "13-1141"),
-    ("HR / Workforce", None, "Training and Development Specialists", "13-1151"),
-    ("HR / Workforce", None, "Human Resources Assistants, Except Payroll and Timekeeping", "43-4161"),
-    ("HR / Workforce", None, "Labor Relations Specialists", "13-1075"),
-    ("License ops / IT procurement", None, "Purchasing Agents, Except Wholesale, Retail, and Farm Products", "13-1023"),
-    ("License ops / IT procurement", None, "Purchasing Managers", "11-3061"),
-    ("License ops / IT procurement", None, "Computer Systems Analysts", "15-1211"),
-    ("License ops / IT procurement", None, "Computer User Support Specialists", "15-1232"),
-    ("GTS Infrastructure", None, "Network and Computer Systems Administrators", "15-1244"),
-    ("GTS Infrastructure", None, "Computer Network Architects", "15-1241"),
-    ("GTS Infrastructure", None, "Computer Network Support Specialists", "15-1231"),
-    ("GTS Infrastructure", None, "Database Administrators", "15-1242"),
-    ("GTS Infrastructure", None, "Information Security Analysts", "15-1212"),
-    ("GTS Infrastructure", None, "Computer and Information Systems Managers", "11-3021"),
-    ("GTS Infrastructure", None, "Software Developers", "15-1252"),
-]
 
 
 # ---- pure helpers (unit-tested) ------------------------------------------------
@@ -311,37 +288,19 @@ def load_titles(conn, log) -> int:
     return len(rows)
 
 
-def seed_roles(conn, log) -> int:
-    n = 0
-    with conn.cursor() as cur:
-        for function, lead, title, code in ROLE_SEED:
-            cur.execute("SELECT 1 FROM work.occupation WHERE soc_code = %s", (code,))
-            if not cur.fetchone():
-                log(f"  seed: {code} {title} is not in work.occupation — skipped (fix the code)")
-                continue
-            cur.execute("""INSERT INTO work.role (function, lead, title, soc_code)
-                           VALUES (%s, %s, %s, %s) ON CONFLICT (function, soc_code) DO NOTHING""",
-                        (function, lead, title, code))
-            n += cur.rowcount
-    conn.commit()
-    log(f"  seeded {n} new role(s)")
-    return n
-
 
 def main(argv: list[str]) -> int:
     stage = argv[1] if len(argv) > 1 else "all"
-    if stage not in ("fetch", "load", "seed-roles", "load-titles", "all"):
+    if stage not in ("fetch", "load", "load-titles", "all"):
         print(__doc__, file=sys.stderr)
         return 2
     log = lambda s: print(s, file=sys.stderr)  # noqa: E731
     if stage in ("fetch", "all"):
         fetch(log)
-    if stage in ("load", "seed-roles", "load-titles", "all"):
+    if stage in ("load", "load-titles", "all"):
         with psycopg.connect(os.environ["PG_DSN"]) as conn:
             if stage in ("load", "all"):
                 load(conn, log)
-            if stage in ("seed-roles", "all"):
-                seed_roles(conn, log)
             if stage in ("load-titles", "all"):
                 load_titles(conn, log)
     return 0
